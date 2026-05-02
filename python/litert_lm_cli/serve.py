@@ -30,6 +30,7 @@ import click
 import litert_lm
 from litert_lm_cli import model
 
+from litert_lm_cli import serve_anthropic
 GEN_CONTENT_RE = re.compile(r"^/v1beta/models/([^/\\:]+):generateContent$")
 STREAM_GEN_CONTENT_RE = re.compile(
     r"^/v1beta/models/([^/\\:]+):streamGenerateContent$"
@@ -486,8 +487,8 @@ def register(cli: click.Group) -> None:
 
   @cli.command(
       help=(
-          "Start a server with a Gemini or OpenAI compatible API (alpha"
-          " feature)"
+          "Start a server with a Gemini, OpenAI, or Anthropic"
+          " compatible API (alpha feature)"
       )
   )
   @click.option(
@@ -496,12 +497,23 @@ def register(cli: click.Group) -> None:
   @click.option("--port", default=9379, type=int, help="Port to listen on")
   @click.option(
       "--api",
-      type=click.Choice(["gemini", "openai"], case_sensitive=False),
+      type=click.Choice(["gemini", "openai", "anthropic"], case_sensitive=False),
       default="gemini",
       help="The API protocol to use.",
   )
+  @click.option(
+      "--model",
+      default=None,
+      type=str,
+      help=(
+          "Optional model id (or path) to pre-load. Used with"
+          " --api anthropic so the server has an engine ready for"
+          " incoming Anthropic Messages API requests. When omitted,"
+          " models load on demand via the request's model field."
+      ),
+  )
   @click.option("--verbose", is_flag=True, help="Enable verbose logging")
-  def serve(host: str, port: int, *, api: str, verbose: bool) -> None:
+  def serve(host: str, port: int, *, api: str, model: Optional[str], verbose: bool) -> None:
     """Starts a local HTTP server speaking the Gemini or OpenAI API protocol.
 
     Args:
@@ -518,6 +530,22 @@ def register(cli: click.Group) -> None:
       handler_class = GeminiHandler
     elif api_lower == "openai":
       handler_class = OpenAIHandler
+    elif api_lower == "anthropic":
+      handler_class = serve_anthropic.AnthropicHandler
+      # Runtime adapter: Claude Code sends model names like
+      # "claude-haiku-4-5-*" that are not registered LiteRT-LM model
+      # ids. Setting accept_any_model=True routes any incoming name
+      # to whichever engine is currently loaded. The optional --model
+      # flag pre-loads an engine so the first request has something
+      # to route to.
+      serve_anthropic._CONFIG["accept_any_model"] = True
+      if model:
+        click.echo(
+            click.style(
+                f"Pre-loading engine for model: {model}", fg="cyan"
+            )
+        )
+        get_engine(model)
     else:
       raise click.BadParameter(f"Unsupported API: {api}")
 
